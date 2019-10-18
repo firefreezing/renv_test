@@ -1,0 +1,167 @@
+---
+title: '**`renv` part 1: `dplyr 0.7.6`**'
+author: "Marisa and Fei"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    code_folding: show
+    theme: cosmo
+---
+<!-- make font a bit bigger for presentation purposes --> 
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 20px;
+  }
+td {  /* Table  */
+  font-size: 16px;
+}
+code.r{ /* Code block */
+    font-size: 16px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 16px;
+}
+</style>
+
+
+```{r setup, message = FALSE, warning = FALSE, echo = FALSE}
+# global knitr options
+library(knitr)
+opts_chunk$set(fig.align = "center", echo = TRUE, warning = TRUE, message = TRUE)
+```
+
+# Motivation
+
+<!-- story about version control + packrat -->
+
+- Goal: reproducible research
+  - Across time: for others and for your future self
+  - Across space: moving code between people/machines
+- R packages change over time, e.g. functions are depracated
+- Using a package management system helps avoid wasted time and stress trying to figure out what package versions are needed to run a piece of code
+
+# `renv` basics
+
+- `renv` is a **dependency management system** for R
+  - Developed by Kevin Ushey at RStudio
+  - "The goal is for renv to be a robust, stable replacement for the Packrat package, with fewer surprises and better default behaviors"
+- Uses a **global package cache**, shared across all projects using `renv`
+  - Package dependencies in a given project are discovered by running `renv::init()` and then installed into the `renv` cache 
+  - As packages are installed, they are also added to the `renv` cache
+  - `renv` links packages from the cache to the project library
+  - Using a global package cache "allows a single package installation to be shared across multiple projects, while allowing these projects to still remain isolated from one another"
+  
+![Default location of the global package cache](images/cache.PNG)
+
+
+![Packages in my global package cache](images/cache2.PNG)
+
+
+![Versions of `dplyr` in my global package cache](images/cache3.PNG)
+
+# Demonstration
+
+We will walk through an example of two people, Bob and Sarah, are collaborating on an exploratory analysis of the Hospital Readmissions Reduction Program (HRRP). Suppose the two are using git for version control, but are **not** using any sort of package management system. 
+
+### Background on the Hospital Readmissions Reduction Program (HRRP) 
+
+- CMS program started in October 2012 
+- Financially penalizes hospitals with excess readmissions for 6 conditions:
+  - heart attack (AMI), 
+  - heart failure (HF), 
+  - pneumonia (PN), 
+  - chronic obstructive pulmonary disease (COPD), 
+  - elective hip or knee replacement (HIP-KNEE), and 
+  - coronary artery bypass graft (CABG)
+- National readmissions rates have fallen since 2012
+- But, there is evidence of heterogeneity: hospitals that are major teaching hospitals, in rural areas, and serve more low-income beneficiaries are more likely to be penalized and have higher penalities (source: [Kaiser Family Foundation](http://files.kff.org/attachment/Issue-Brief-Fewer-Hospital-U-turns-The-Medicare-Hospital-Readmission-Reduction-Program))
+
+#### Data
+
+- Publicly available data on the [HRRP program](https://data.medicare.gov/Hospital-Compare/Hospital-Readmissions-Reduction-Program/9n3s-kdb3)
+- Merged with [general hospital information](https://data.medicare.gov/Hospital-Compare/Hospital-General-Information/xubh-q36u)
+
+<!--
+
+In October 2012, the Center for Medicare Services (CMS) began implementing the Hospital Readmissions Reduction Program (HRRP). The HRRP financially penalizes hospitals with excess readmissions. CMS characterizes excess readmissions using a ratio of the hospital's number of "predicted" 30-day readmissions for the given condition to the "expected" number of readmissions for the condition based on an average hospital with similar patients. Thus, a readmissions ratio greater than one indicates worse than average performance in readmissions and a readmissions ratio less than one indicates better than average performance. Currently, the HRRP focuses on readmission rates for 6 conditions: heart attack (AMI), heart failure (HF), pneumonia (PN), chronic obstructive pulmonary disease (COPD), elective hip or knee replacement (HIP-KNEE), and coronary artery bypass graft (CABG)
+
+As noted in an [issue brief from the Kaiser Family Foundation](http://files.kff.org/attachment/Issue-Brief-Fewer-Hospital-U-turns-The-Medicare-Hospital-Readmission-Reduction-Program), national readmission rates have consitently fallen since 2012, suggesting hospitals and clinicians "may have adopted new, system-wide interventions soon after the HRRP was enacted". However, the report notes that some types of hospitals are still more likely than others to be penalized under the HRRP. Specifically, the report notes hospitals that are major teaching hospitals, in rural areas, and serve more low-income beneficiaries are more likely to be penalized and have higher penalities.  
+
+One hypothesis is that certain types of hospitals have fewer resources to successfully implement systemic changes that help reduce readmission rates, and therefore reduce penalizations under the HRRP. If this hypothesis were true, additional policies could be implemented to (1) adjust the calculation of the excess readmissions ratio to account for some of these differences, (2) adjust the HRRP penalties for certain hospital characteristics, and/or (3) support hospitals with fewer resources in pursuing changes to reduce readmission rates. 
+
+Using publicly available data from the CMS on the [HRRP program](https://data.medicare.gov/Hospital-Compare/Hospital-Readmissions-Reduction-Program/9n3s-kdb3) and [general hospital information](https://data.medicare.gov/Hospital-Compare/Hospital-General-Information/xubh-q36u), this analysis continues to explore hospital characteristics associated with higher excess readmission rates overall and for each of the 6 conditions separately. 
+ -->
+ 
+```{r, warning = FALSE, message = FALSE, eval = F}
+library(renv)
+# give consent for renv to run in Rmd
+renv::consent(provided = TRUE) 
+
+# load libraries from previous renv::snapshot
+renv::revert(commit = "2c4179af7f118f34c93dca61d88a606c2946540b")
+renv::restore()
+```
+ 
+ Bob starts the code for the exploratory analysis on his local machine. He starts by loading the packages he wants to use:
+ 
+```{r, warning = FALSE, message = FALSE}
+library(kableExtra)
+library(tidyverse)
+library(dplyr)
+```
+
+Check the version of `dplyr` loaded:
+```{r}
+packageVersion("dplyr")
+```
+
+Note that Bob is using **`dplyr` version 0.7.6**. 
+
+```{r}
+dat <- read.csv("data/ghi_hrrp.csv")
+dat <- dat %>% filter(!is.na(excess_readmission_ratio))
+```
+
+The outcome variable of interest in the exploratory analysis is: `excess_readmission_rate`.
+
+Bob and Sarah are interesting in looking at the excess readmission rate across various factors, e.g.  `emergency_services` (presence of emergency services), `state`, `hospital_ownership`, etc. 
+<!--
+stopped here 
+-->
+For example, let's look at some summary stats for the excess readmission of by hospital ownership:  
+
+```{r, warning = FALSE}
+tab1 <- dat %>%
+  group_by(hospital_ownership) %>% 
+  summarise(mean = mean(excess_readmission_ratio), 
+            median = median(excess_readmission_ratio), 
+            sd = sd(excess_readmission_ratio), 
+            n = n())
+
+tab1 %>%
+  kable %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Let's wrap this up in a function. In `dplyr` 0.7.6, we can use the "underscore" method `group_by_`, which uses standard evaluation, to pass our grouping variable as a value. 
+
+```{r}
+err_sum <- function(df, group_var) {  # err = excess readmission ratio : )
+  df %>%
+    group_by_(group_var) %>% 
+    summarise(mean = mean(excess_readmission_ratio), 
+              median = median(excess_readmission_ratio), 
+              sd = sd(excess_readmission_ratio), 
+              n = n())
+}
+
+tab2 <- err_sum(dat, "hospital_ownership")
+```
+
+Check that the function is working as expected:
+
+```{r}
+assertthat::are_equal(tab1, tab2)
+```

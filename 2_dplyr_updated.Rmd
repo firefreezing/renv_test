@@ -1,0 +1,433 @@
+---
+title: '**`renv` part 2: `dplyr 0.8.0`** '
+author: "Marisa and Fei"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    code_folding: show
+    theme: cosmo
+---
+<!-- make font a bit bigger for presentation purposes --> 
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 20px;
+  }
+td {  /* Table  */
+  font-size: 16px;
+}
+code.r{ /* Code block */
+    font-size: 16px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 16px;
+}
+</style>
+
+
+```{r setup, message = FALSE, warning = FALSE, echo = FALSE}
+# global knitr options
+library(knitr)
+opts_chunk$set(fig.align = "center", echo = TRUE, warning = TRUE, message = TRUE)
+```
+
+```{r, warning = FALSE, message = FALSE}
+library(renv)
+# give consent for renv to run in Rmd
+renv::consent(provided = TRUE) 
+
+# load libraries from previous renv::snapshot
+# renv::revert(commit = "2d9c6914c1995721bf1b8149afa6997d25010d00")
+renv::restore()
+```
+
+```{r, warning = FALSE, message = FALSE}
+library(assertthat)
+library(kableExtra)
+library(maptools)
+library(sf)
+library(sp)
+library(spdep)
+library(raster)
+library(leaflet)
+library(tmap)
+library(tmaptools)
+library(RColorBrewer)
+library(tidyverse)
+library(dplyr)
+```
+
+Note that I now have **`dplyr` version 0.8.0**. loaded:
+```{r}
+packageVersion("dplyr")
+```
+
+
+```{r, echo = FALSE}
+# load data
+dat <- read.csv("data/ghi_hrrp.csv")
+dat <- dat %>% filter(!is.na(excess_readmission_ratio))
+
+state_sf <- sf::st_read("data/cb_2016_us_state_20m/cb_2016_us_state_20m.shp") 
+county_sf <- sf::st_read("data/cb_2016_us_county_20m/cb_2016_us_county_20m.shp") 
+
+# add geoid as unique identifiers for states and counties -----------------
+
+# state dictionary
+st_dict <- state_sf %>% st_drop_geometry() %>% 
+  dplyr::select(geoid_st = STATEFP, state = STUSPS)
+
+dat_cnty_lst <- dat %>% dplyr::select(county_name, state) %>% distinct() %>%
+  mutate(key = str_c(state, tolower(county_name), sep = "_"))
+
+# side note Q: some counties could have more than one GEOIDs, why?
+# for demo purpose: just pick one
+# cnty_dict_sf <- county_sf %>% st_drop_geometry() %>% select(STATEFP, GEOID, county_name = NAME) %>%
+#   group_by(STATEFP, county_name) %>%
+#   mutate(n = n()) %>%
+#   arrange(desc(n))
+
+cnty_dict_sf <- county_sf %>% st_drop_geometry() %>% 
+  dplyr::select(STATEFP, GEOID, county_name = NAME) %>% 
+  left_join(state_sf %>% st_drop_geometry() %>% 
+              dplyr::select(STATEFP, state = STUSPS), 
+            by = "STATEFP") %>%
+  mutate(key = str_c(state, tolower(county_name), sep = "_"))
+
+dat_cnty_lst <- dat_cnty_lst %>%
+  left_join(cnty_dict_sf, by = "key", suffix = c("_hrrp", "_cnty_sf")) %>%
+  group_by(key) %>%
+  mutate(cnt = n(),
+         num = row_number()) %>%
+  filter(
+    !is.na(STATEFP),
+    row_number() == 1  # only select the first record if there is multiple geoids per county
+    ) %>%
+  ungroup()
+
+cnty_dict <- dat_cnty_lst %>%
+  dplyr::select(county_name = county_name_hrrp, 
+                state = state_hrrp, geoid_cnty = GEOID)
+
+dat_w_key <- dat %>%
+  left_join(st_dict, by = "state") %>%
+  left_join(cnty_dict, by = c("state", "county_name"))
+```
+
+```{r}
+# err_sum 
+err_sum <- function(df, group_var) {  # err = excess readmission ratio : )
+  df %>%
+    group_by_(group_var) %>% 
+    summarise(mean = mean(excess_readmission_ratio), 
+              median = median(excess_readmission_ratio), 
+              sd = sd(excess_readmission_ratio), 
+              n = n())
+}
+```
+
+Now let's say we wanted to summarize the excess readmission ratio for just one measure, e.g. AMI.
+
+There are a number of ways we could accomplish this: 
+ - pass a filtered dataframe to the `err_sum` function e.g. ` err_sum(dat %>% filter(measure_name == "AMI", "hospital_ownership")`
+ - use the `nest` function e.g. `dat_nested <- dat %>% group_by(measure_name) %>% nest()` and then `map(dat_nested[["data"]], ~err_sum(.x, "hospital_ownership"))`, 
+ - Write another function that filters our data and then calls `err_sum`
+ 
+```{r}
+tab3 <- dat %>%
+  filter(measure_name == "AMI") %>% 
+  group_by(hospital_ownership) %>% 
+  summarise(mean = mean(excess_readmission_ratio), 
+            median = median(excess_readmission_ratio), 
+            sd = sd(excess_readmission_ratio), 
+            n = n())
+
+tab3 %>%
+  kable %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r}
+err_sum_filtered <- function(group_var, filter_var, filter_value) {  
+ dat_filtered <- dat %>%
+    filter_(paste0(filter_var, " == ", "'", filter_value,"'"))
+ 
+  err_sum(dat_filtered, group_var)
+}
+
+tab4 <- err_sum_filtered(group_var = "hospital_ownership", 
+                         filter_var = "measure_name",  
+                         filter_value = "AMI")
+```
+
+Check new function is working as expected: 
+
+```{r}
+are_equal(tab3, tab4)
+```
+
+Now we can get summary statistics across various grouping variables for each measure.
+
+```{r}
+measures <- levels(dat$measure_name)
+results <- map(measures, 
+               ~err_sum_filtered(group_var = "hospital_ownership", 
+                                 filter_var = "measure_name", 
+                                 filter_value = .x))
+names(results) <- measures
+```
+
+# {.tabset .tabset-fade .tabset-pills}
+
+```{r}
+fct_summarise_hrrp <- function(dat, report_lvl, measr){
+  
+  # input:
+  #   dat - a data frame, with records of readmission rate per hospital per measure
+  #   report_lvl - a string, either "state" or "county"
+  #   measr - a string, measure name. 
+  # output:
+  #   corr_mtrx - correlation matrix between measures
+  #   map - a list of tmap objects: continental, Hawaii, and Alaska
+  
+  index <- list(
+    state = list(shape_file = state_sf, key = "geoid_st"),
+    county = list(shape_file = county_sf, key = "geoid_cnty")
+  )
+  
+  var_key <- sym(index[[report_lvl]][["key"]])
+  
+  dat_clean <- dat %>%
+    dplyr::select(hospital_name, provider_id, !!var_key, measure_name,
+           excess_readmission_ratio, 
+           predicted_readmission_rate, 
+           expected_readmission_rate) %>%
+    filter(!is.na(excess_readmission_ratio) & !is.na(!!var_key)) %>%
+    group_by(!!var_key, measure_name) %>%
+    summarise(err = sum(predicted_readmission_rate)/sum(expected_readmission_rate)) %>%
+    spread(key = measure_name, value = err) %>%
+    ungroup
+  
+  corr_mtrx <- dat_clean %>% 
+    dplyr::select(-!!var_key) %>%
+    cor(method = "pearson", use = "pairwise.complete.obs")
+  
+  hrrp_sf <- index[[report_lvl]][["shape_file"]] %>%
+    left_join(dat_clean, by = c("GEOID" = index[[report_lvl]][["key"]]))
+  
+  # HI - 15, AK - 02
+  us_continental_map <- tm_shape(hrrp_sf %>% 
+                                   filter(!str_sub(GEOID, 1, 2) %in% c("15", "02")), 
+                                 projection = 2163) +
+    tm_fill(col = measr, palette = "OrRd", n = 4) +
+    tm_borders(col = "grey50") +
+    tm_layout(frame = FALSE, 
+              legend.position = c("right","bottom"),
+              main.title = str_c("Risk-adjusted readmission rate of ", measr, 
+                                 " by ", report_lvl))
+  
+  hawaii_map <- tm_shape(hrrp_sf %>% filter(str_sub(GEOID, 1, 2) == "15")) +
+    tm_fill(col = measr, palette = "OrRd", n = 4, legend.show = F) +
+    tm_borders(col = "grey50")+
+    tm_layout(title = "Hawaii", frame = FALSE, bg.color = NA, 
+              title.position = c("left", "bottom"))
+  
+  alaska_map <- tm_shape(hrrp_sf %>% filter(str_sub(GEOID, 1, 2) == "02"), 
+                         projection = 2163) +
+    tm_fill(col = measr, palette = "OrRd", n = 4, legend.show = F) +
+    tm_borders(col = "grey50")+
+    tm_layout(title = "Alaska", frame = FALSE, bg.color = NA)
+  
+  return(list(
+    corr_mtrx = corr_mtrx,
+    map = list(
+      continental = us_continental_map,
+      hawaii = hawaii_map,
+      alaska = alaska_map)
+  ))
+}
+```
+
+
+## **AMI**
+```{r}
+results$AMI %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r state_map_ami}
+output <- fct_summarise_hrrp(dat_w_key, "state", "AMI")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+```{r county_map_ami}
+output <- fct_summarise_hrrp(dat_w_key, "county", "AMI")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+## **CABG**
+```{r}
+results$CABG %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r state_map_cabg}
+output <- fct_summarise_hrrp(dat_w_key, "state", "CABG")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+```{r county_map_cabg}
+output <- fct_summarise_hrrp(dat_w_key, "county", "CABG")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+## **COPD**
+```{r}
+results$COPD %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r state_map_copd}
+output <- fct_summarise_hrrp(dat_w_key, "state", "COPD")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+```{r county_map_copd}
+output <- fct_summarise_hrrp(dat_w_key, "county", "COPD")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+ 
+## **HF**
+```{r}
+results$HF %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r state_map_hf}
+output <- fct_summarise_hrrp(dat_w_key, "state", "HF")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+```{r county_map_hf}
+output <- fct_summarise_hrrp(dat_w_key, "county", "HF")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+## **HIP_KNEE**
+```{r}
+results$HIP_KNEE %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r state_map_hipknee}
+output <- fct_summarise_hrrp(dat_w_key, "state", "HIP_KNEE")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+```{r county_map_hipknee}
+output <- fct_summarise_hrrp(dat_w_key, "county", "HIP_KNEE")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+## **PN**
+```{r}
+results$PN %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+# 
+
+```{r state_map_pn}
+output <- fct_summarise_hrrp(dat_w_key, "state", "PN")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+
+```{r county_map_pn}
+output <- fct_summarise_hrrp(dat_w_key, "county", "PN")
+
+output$map$continental
+print(output$map$alaska, vp = grid::viewport(0.15, 0.15, width = 0.3, height = 0.3))
+print(output$map$hawaii, vp = grid::viewport(0.35, 0.1, width = 0.2, height = 0.1))
+```
+
+```{r}
+dat %>% 
+  group_by(hospital_ownership) %>% 
+  group_walk(~write.csv(.x, file = paste0("output/", .y$hospital_ownership, ".csv")))
+```
+
+Underscore methods from `dplyr` are being deprecated, so we should use the standard `dplyr` functions (i.e. not the underscore versions) and use non-standard evaluation (NSE). Read up on tidyeval [here](https://tidyeval.tidyverse.org) and watch a 5 min video overview of NSE from Hadley [here](https://www.youtube.com/watch?v=nERXS3ssntw).
+
+```{r}
+err_sum <- function(df, group_var) {  
+  
+  group_var <- enquo(group_var)
+  
+  df %>%
+    group_by(!!group_var) %>% 
+    summarise(mean = mean(excess_readmission_ratio), 
+              median = median(excess_readmission_ratio), 
+              sd = sd(excess_readmission_ratio), 
+              n = n())
+}
+
+err_sum_filtered <- function(group_var, filter_var, filter_value) {  
+  group_var <- enquo(group_var)
+  filter_var <- enquo(filter_var)
+
+    dat_filtered <- dat %>%
+    filter((!!filter_var) == filter_value)
+ 
+  err_sum(dat_filtered, !!group_var) 
+}
+```
+
+```{r}
+results2 <- map(measures, 
+               ~err_sum_filtered(group_var = hospital_ownership, 
+                                  filter_var = measure_name, 
+                                  filter_value = .x))
+names(results2) <- measures
+```
+
+Check for equivalence: 
+```{r}
+assert_that(sum(map2(results, results2, ~!all_equal(.x, .y)) %>% unlist()) == 0)
+```
+
+

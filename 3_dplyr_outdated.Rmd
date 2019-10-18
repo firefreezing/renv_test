@@ -1,0 +1,87 @@
+---
+title: '**`renv` part 3: back to `dplyr 0.7.6`** '
+author: "Marisa and Fei"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    code_folding: show
+    theme: cosmo
+---
+<!-- make font a bit bigger for presentation purposes --> 
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 20px;
+  }
+td {  /* Table  */
+  font-size: 16px;
+}
+code.r{ /* Code block */
+    font-size: 16px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 16px;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning = FALSE, message = FALSE}
+library(renv)
+# give consent for renv to run in Rmd
+renv::consent(provided = TRUE) 
+
+# load libraries from previous renv::snapshot
+# renv::revert(commit = "2c4179af7f118f34c93dca61d88a606c2946540b")
+renv::restore()
+```
+ 
+```{r, warning = FALSE, message = FALSE}
+library(assertthat)
+library(kableExtra)
+library(maptools)
+library(sf)
+library(sp)
+library(spdep)
+library(raster)
+library(leaflet)
+library(tmap)
+library(tmaptools)
+library(RColorBrewer)
+library(tidyverse)
+library(dplyr)
+```
+
+Check the version of `dplyr` loaded:
+```{r}
+packageVersion("dplyr")
+```
+
+
+```{r, error = TRUE}
+dat <- read.csv("data/ghi_hrrp.csv")
+dat <- dat %>% filter(!is.na(excess_readmission_ratio))
+
+dat %>% 
+  group_by(hospital_ownership) %>% 
+  group_walk(~write.csv(.x, file = paste0("output/", .y$hospital_ownership, ".csv")))
+```
+
+# `renv` pros/cons
+
+Pros 
+- Reproducibility!
+- Easy to add to R projects
+- Easy (in theory -- haven't actually tried this yet) to migrate a `packrat` project to `renv`
+- Integration with git and ability to look back at packages/dependencies in different git commits
+- Can be used with Docker
+- Still being actively developed, so not as integrated with Rstudio as `packrat` (yet)
+
+Cons
+- `renv` snapshots are only stored in history after a git commit
+- Still being actively developed, so not as integrated with Rstudio as `packrat` (yet)
+

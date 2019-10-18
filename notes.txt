@@ -1,0 +1,18 @@
+outline:
+
+1. introduce packrat - why we need it
+
+2. topic:
+	state-level/county-level readmission rate, by measure, by hosptial characteritics (ownership & emergency services & hospital type)
+
+
+materials:
+1. R for slides (nice to have) - reach out to Jon  
+
+
+useful links:
+1. on quosure: https://edwinth.github.io/blog/dplyr-recipes/
+
+
+
+add assertthat to call are_equal 1_dplyr_outdated
